@@ -50,7 +50,11 @@ proccessMessage message interval time admins schedule = do
 formCopyRequest :: Value -> Msg2Copy
 formCopyRequest message = Msg2Copy
                             name 
+<<<<<<< HEAD
                             ("@testhaskell" :: Text)
+=======
+                            ("@xuivragam" :: Text)
+>>>>>>> af8498c (T_T)
                             (message ^?! key "chat" . key "id" . _Integral)
                             (message ^?! key "message_id" . _Integral)
                                 where name = (message ^? key "from" . key "first_name" . _String) 
