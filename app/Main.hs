@@ -93,4 +93,4 @@ main = do
         _ <- forkIO $ scheduleLoop token (scheduled state)
         updateLoop token state
             where 
-                token = "1023560776:AAE3igMt_MGdw4BYAjAfm2bBesqEBlrR3Hw"
+                token = "6294411428:AAEyIfDs5CVlgWHMQfePsr2OQ1eIuVLYaPU"
