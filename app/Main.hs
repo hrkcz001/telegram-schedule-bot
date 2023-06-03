@@ -2,7 +2,7 @@
 
 module Main (main) where
 
-import Connection (Token, getUpdate, copyMessage)
+import Connection (Token, getUpdate, copyMessage, changeName)
 import Update (Error(..), Schedule, ScheduledMessage(..), State(..), initialState, handleResponse, Msg2Copy(..))
 import Logic (proccessMessage)
 import Control.Concurrent
@@ -73,6 +73,7 @@ scheduleLoop token schedule = do
                     
 handleScheduled :: Token -> Msg2Copy -> IO ()
 handleScheduled token message = do
+    _ <- changeName token (senderName message)
     resp <- copyMessage token message
     case resp of
         Right r -> case r ^? responseStatus . statusCode of
@@ -92,4 +93,4 @@ main = do
         _ <- forkIO $ scheduleLoop token (scheduled state)
         updateLoop token state
             where 
-                token = "6294411428:AAEyIfDs5CVlgWHMQfePsr2OQ1eIuVLYaPU"
+                token = "1023560776:AAE3igMt_MGdw4BYAjAfm2bBesqEBlrR3Hw"

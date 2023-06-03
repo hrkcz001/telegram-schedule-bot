@@ -23,7 +23,7 @@ import Control.Exception (SomeException)
 
 type Stack = MVar [Value]
 
-data Msg2Copy = Msg2Copy { chatId :: Text, fromChatId :: Int, messageId :: Int }
+data Msg2Copy = Msg2Copy {senderName :: Maybe Text,  chatId :: Text, fromChatId :: Int, messageId :: Int }
 data ScheduledMessage = ScheduledMessage { msg2Send :: Msg2Copy, time2Send :: Int }
 type Schedule = MVar [ScheduledMessage]
 

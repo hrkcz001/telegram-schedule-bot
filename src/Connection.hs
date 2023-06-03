@@ -3,10 +3,14 @@
 module Connection
     (   getUpdate,
         copyMessage,
+        changeName,
         Token
     ) where
 
 import Update (Error(..), Msg2Copy(..))
+
+import Data.Maybe (fromMaybe)
+import Data.Text (Text)
 import Network.Wreq
 import Data.ByteString.Lazy as ByteString
 import Control.Exception (try)
@@ -34,3 +38,13 @@ copyMessage token message = do
                                               , "from_chat_id" := fromChatId message
                                               , "message_id" := messageId message
                                               ]
+
+changeName :: Token -> Maybe Text -> IO ()
+changeName token newName = do
+                                _ <- post url formMsg
+                                return ()
+                                where
+                                    url = "https://api.telegram.org/bot" ++ token ++ "/setMyName"
+                                    formMsg = [ "name" := fromMaybe "Хтонь" newName
+                                              ]
+

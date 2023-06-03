@@ -49,9 +49,14 @@ proccessMessage message interval time admins schedule = do
 
 formCopyRequest :: Value -> Msg2Copy
 formCopyRequest message = Msg2Copy
-                            ("@xuivragam" :: Text)
+                            name 
+                            ("@testhaskell" :: Text)
                             (message ^?! key "chat" . key "id" . _Integral)
                             (message ^?! key "message_id" . _Integral)
+                                where name = (message ^? key "from" . key "first_name" . _String) 
+                                                <> case message ^? key "from" . key "last_name" . _String of
+                                                        Just lastName -> Just $ " " <> lastName
+                                                        Nothing -> Nothing
 
 appendAdmin :: [Int] -> Value -> Maybe [Int]
 appendAdmin admins msg = case msg ^? key "chat" . key "id" . _Integral of
