@@ -27,6 +27,7 @@ library
   exposed-modules:
       Connection
       Logic
+      Timer
       Update
   other-modules:
       Paths_telegram_delay_bot

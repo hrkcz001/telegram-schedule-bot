@@ -1,17 +1,15 @@
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Update (
-    handleResponse,
-    initialState,
-    State(..),
+    Update.init,
+    InitOpts(..),
     Stack,
-    Schedule,
-    ScheduledMessage(..),
-    Msg2Copy(..),
-    Error(..),
+    popUpdate,
+    popError,
+    putError
 ) where
 
-import Data.Text (Text)
+import Connection (Token, Error(..), getUpdate)
 import Data.Aeson
 import Data.Aeson.Lens
 import Control.Lens
@@ -19,74 +17,117 @@ import Control.Concurrent.MVar
 import Data.Vector as Vector
 import Data.ByteString.Lazy as ByteString
 import Network.Wreq
-import Control.Exception (SomeException)
+import Control.Concurrent (forkIO, threadDelay)
 
-type Stack = MVar [Value]
+data Stack = Stack { stackUpdates :: MVar [Value], stackErrors :: MVar [Error] }
 
-data Msg2Copy = Msg2Copy {senderName :: Maybe Text,  chatId :: Text, fromChatId :: Int, messageId :: Int }
-data ScheduledMessage = ScheduledMessage { msg2Send :: Msg2Copy, time2Send :: Int }
-type Schedule = MVar [ScheduledMessage]
+putError :: Stack -> Error -> IO ()
+putError stack err = do
+                        curErrors <- takeMVar errors
+                        putMVar errors $ curErrors Prelude.++ [err]
+                        where errors = stackErrors stack
 
-data State = State  {   offset :: Int 
-                    ,   stacked :: Stack
-                    ,   scheduled :: Schedule
-                    ,   curInterval :: MVar Int
-                    ,   admins :: [Int]
-                    ,   returnedError :: Maybe Error 
-                    }
+popError :: Stack -> IO (Maybe Error)
+popError stack = do
+                    curErrors <- takeMVar errors
+                    case curErrors of
+                        [] -> do
+                                putMVar errors []
+                                return Nothing
+                        (x:xs) -> do
+                                    putMVar errors xs
+                                    return $ Just x
+                    where errors = stackErrors stack
 
-data Error = InvalidResponse 
-           | StatusCode Int
-           | Exception SomeException
-           | Other Text
-         deriving (Show)
+putUpdates :: Stack -> [Value] -> IO ()
+putUpdates _ [] = return ()
+putUpdates stack vals = do
+                        curStack <- takeMVar updates
+                        putMVar updates $ curStack Prelude.++ vals
+                        where updates = stackUpdates stack
 
-initialState :: IO State
-initialState = do
-                emptyStack <- newMVar []
-                emptySchedule <- newMVar []
-                interval <- newMVar 10
-                return $ State 0 emptyStack emptySchedule interval [] Nothing
+popUpdate :: Stack -> IO (Maybe Value)
+popUpdate stack = do
+                    curStack <- takeMVar updates
+                    case curStack of
+                        [] -> do
+                                putMVar updates []
+                                return Nothing
+                        (x:xs) -> do
+                                    putMVar updates xs
+                                    return $ Just x
+                    where updates = stackUpdates stack
 
-handleResponse :: State -> Response ByteString -> IO State
-handleResponse state response = do
-                                case response ^? responseStatus . statusCode of
-                                    Just 200 -> case response ^? responseBody of
-                                                    Just body -> handleBody state body
-                                                    _ -> return $ state { returnedError = Just InvalidResponse }
-                                    Just code -> return $ state { returnedError = Just (StatusCode code) }
-                                    _ -> return $ state { returnedError = Just InvalidResponse }
+data State = State { stateToken :: Token, stateTimeout :: Int, stateOffset :: Int}
+data InitOpts = InitOpts { initToken :: Token , initTimeout :: Int}
 
-handleBody :: State -> ByteString -> IO State
-handleBody state body = case body ^? key "ok" of
+init :: InitOpts -> IO Stack
+init initOpts = do
+                    newUpdates <- newMVar []
+                    newErrors <- newMVar []
+                    let newStack = Stack newUpdates newErrors
+                    _ <- forkIO $ updateLoop newStack (State token timeout 0)
+                    return newStack
+                    where
+                        token = initToken initOpts
+                        timeout = initTimeout initOpts
+
+
+data Update = Update { updateOffset :: Maybe Int, updateResult :: Either Error [Value] }
+
+emptyUpdate :: Update
+emptyUpdate = Update (Just 0) (Right [])
+
+raiseError :: Error -> Update
+raiseError e = emptyUpdate { updateResult = Left e }
+
+updateLoop :: Stack -> State -> IO ()
+updateLoop stack state = do
+                        response <- getUpdate (stateToken state) (stateTimeout state) (stateOffset state)
+                        newState <- case response of
+                            Left  e -> putError stack e
+                                       >> return state
+                            Right r -> case handleResponse r of
+                                        Update { updateOffset = offset 
+                                               , updateResult = result }
+                                                -> case result of
+                                                        Left  e -> putError stack e
+                                                                   >> return state
+                                                        Right v -> putUpdates stack v
+                                                                   >> case offset of
+                                                                        Just o -> return state { stateOffset = o }
+                                                                        _ -> return state
+                        threadDelay $ stateTimeout newState * 1000000
+                        updateLoop stack newState
+
+handleResponse :: Response ByteString -> Update
+handleResponse response = case response ^? responseStatus . statusCode of
+                              Just 200 -> case response ^? responseBody of
+                                              Just body -> handleBody body
+                                              _ -> raiseError InvalidResponse
+                              Just code -> raiseError $ StatusCode code
+                              _ -> raiseError InvalidResponse
+
+handleBody :: ByteString -> Update
+handleBody body = case body ^? key "ok" of
     Just (Bool True) -> case body ^? key "result" of
-                            Just result -> updateState state result
-                            _ -> return $ state { returnedError = Just InvalidResponse }
+                            Just result -> handleUpdate result
+                            _ -> raiseError InvalidResponse
     Just (Bool False) -> case body ^? key "description" of
-                            Just (String s) -> return $ state { returnedError = Just (Other s) }
-                            _ -> return $ state { returnedError = Just InvalidResponse }
-    _ -> return $ state { returnedError = Just InvalidResponse }
+                            Just (String s) -> raiseError $ Other s
+                            _ -> raiseError InvalidResponse
+    _ -> raiseError InvalidResponse
 
-updateState :: State -> Value -> IO State
-updateState state result = do
-                            newStack <- updateStack (stacked state) result
-                            return $ State  (updateOffset (offset state) result)
-                                            newStack
-                                            (scheduled state)
-                                            (curInterval state)
-                                            (admins state)
-                                            (returnedError state)
+handleUpdate :: Value -> Update
+handleUpdate result = Update (handleOffset result) (handleResult result)
 
-updateOffset :: Int -> Value -> Int
-updateOffset curOffset (Array (Vector.null -> True)) = curOffset
-updateOffset curOffset (Array vector) = case Vector.last vector ^? key "update_id" of
-                                    Just (Number n) -> floor n + 1
-                                    _ -> curOffset
-updateOffset curOffset _ = curOffset
+handleOffset :: Value -> Maybe Int
+handleOffset (Array (Vector.null -> True)) = Nothing
+handleOffset (Array vector) = case Vector.last vector ^? key "update_id" of
+                          Just (Number n) -> Just $ floor n + 1
+                          _ -> Nothing
+handleOffset _ = Nothing
 
-updateStack :: MVar [Value] -> Value -> IO (MVar [Value])
-updateStack stack (Array vector) = do 
-                                    curStack <- takeMVar stack
-                                    putMVar stack $ curStack Prelude.++ Vector.toList vector
-                                    return stack
-updateStack stack _ = return stack
+handleResult :: Value -> Either Error [Value]
+handleResult (Array vector) = Right $ Vector.toList vector
+handleResult _ = Left InvalidResponse
