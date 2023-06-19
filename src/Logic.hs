@@ -2,6 +2,7 @@
 {-# LANGUAGE ViewPatterns #-}
 
 module Logic (
+    InitOpts(..),
     Schedule,
     ScheduledMessage(..),
     process
@@ -22,26 +23,47 @@ import Data.Time.Clock.POSIX (getPOSIXTime)
 data ScheduledMessage = ScheduledMessage { sender2Send :: Maybe Text, msg2Send :: Msg2Copy, time2Send :: Int }
 type Schedule = MVar [ScheduledMessage]
 
+data Admins = Admins { adminsId :: [Int], adminsName :: [Text] }
+
 data State = State  {   stateToken :: Token
                     ,   stateSchedule :: Schedule
                     ,   stateNextTime :: Int
                     ,   stateInterval :: Int
-                    ,   stateAdmins :: [Int]
+                    ,   statePassword :: Text
+                    ,   stateAdmins :: Admins
                     ,   stateDestination :: Text
                     }
+
+data InitOpts = InitOpts    {   initStack :: Stack
+                            ,   initToken :: Token
+                            ,   initInterval :: Int
+                            ,   initDestination :: Text
+                            ,   initPassword :: Text
+                            ,   initAdmins :: [Text]
+                            }
 
 initState :: IO State
 initState = do
                 schedule <- newMVar []
-                return $ State "" schedule 0 1 [] ""
+                return $ State "" schedule 0 1 "" ( Admins [] [] ) ""
 
 curTime :: IO Int
 curTime = round <$> getPOSIXTime
 
-process :: Token -> Stack -> Text -> IO Schedule
-process token stack destination = do
+process :: InitOpts -> IO Schedule
+process InitOpts    { initStack = stack
+                    , initToken = token
+                    , initInterval = interval
+                    , initDestination = destination
+                    , initPassword = password
+                    , initAdmins = admins }  
+                    = do
                     emptyState <- initState
-                    let state = emptyState { stateDestination = destination, stateToken = token }
+                    let state = emptyState  { stateDestination = destination
+                                            , stateToken = token 
+                                            , stateInterval = interval
+                                            , statePassword = password
+                                            , stateAdmins = Admins [] admins}
                     _ <- forkIO $ processLoop stack state
                     return $ stateSchedule state
 
@@ -62,7 +84,7 @@ processMessage stack state message = do
         Just msg -> case msg ^? key "text" . _String of
                         Just text -> case text of
                                         (first 1 -> "!") -> return state
-                                        "/login 7Qe2bZJ1LG" -> return $ state { stateAdmins = appendAdmin admins msg }
+                                        (login -> True) -> return $ state { stateAdmins = appendAdmin admins msg }
                                         (first 9 -> "/interval") ->
                                                 if isAdmin admins msg
                                                     then
@@ -90,14 +112,25 @@ processMessage stack state message = do
                                                             Left e -> do
                                                                         putError stack e
                                                                         return state
+                                        (first 5 -> "/wake") -> if isAdmin admins msg
+                                                                then do
+                                                                    schedule_val <- readMVar schedule
+                                                                    time <- curTime
+                                                                    return $ 
+                                                                      if null schedule_val
+                                                                        then state { stateNextTime = time }
+                                                                        else state
+                                                                else return state
                                         _ -> modifySchedule
                         _ -> modifySchedule
                         where 
                             token = stateToken state
                             interval = stateInterval state * 60
                             schedule = stateSchedule state
+                            passwd = statePassword state
                             admins = stateAdmins state
                             first n = unpack . Data.Text.take n
+                            login = (==) $ "/login " <> passwd
                             modifySchedule = if isAdmin admins msg
                                                     then do
                                                         time <- curTime
@@ -122,23 +155,34 @@ formCopyRequest destination message = Msg2Copy
                                                         Just lastName -> Just $ " " <> lastName
                                                         Nothing -> Nothing
 
-appendAdmin :: [Int] -> Value -> [Int]
-appendAdmin admins msg = case msg ^? key "chat" . key "id" . _Integral of
-                            Just adminId -> if adminId `elem` admins
-                                            then admins
-                                            else admins ++ [adminId]
-                            Nothing -> admins
+appendAdmin :: Admins -> Value -> Admins
+appendAdmin admins msg = Admins 
+                        (adminsId admins ++ appendId)
+                        (adminsName admins ++ appendName)
+    where   appendId = case msg ^? key "chat" . key "id" . _Integral of
+                            Just adminId -> [adminId | adminId `notElem` adminsId admins]
+                            Nothing -> []
+            appendName = case senderLogin msg of
+                            Just name -> [name | name `notElem` adminsName admins]
+                            Nothing -> []
 
-isAdmin :: [Int] -> Value -> Bool
-isAdmin admins msg = case msg ^? key "chat" . key "id" . _Integral of
-                        Just adminId -> adminId `elem` admins
-                        Nothing -> False
+isAdmin :: Admins -> Value -> Bool
+isAdmin admins msg = idMatch || nameMatch 
+    where   idMatch   = case msg ^? key "chat" . key "id" . _Integral of
+                            Just adminId -> adminId `elem` adminsId admins
+                            Nothing -> False
+            nameMatch = case senderLogin msg of
+                            Just name -> name `elem` adminsName admins
+                            Nothing -> False
 
 senderName :: Value -> Maybe Text
 senderName msg = (msg ^? key "from" . key "first_name" . _String) 
                     <> case msg ^? key "from" . key "last_name" . _String of
                             Just lastName -> Just $ " " <> lastName
                             Nothing -> Nothing
+
+senderLogin :: Value -> Maybe Text
+senderLogin msg = msg ^? key "from" . key "username" . _String
 
 formStatusResponse :: Value -> Int -> State -> Schedule -> IO Msg2Send
 formStatusResponse msg time state schedule = do 
@@ -151,13 +195,50 @@ formStatusResponse msg time state schedule = do
 formStatusText :: Int -> State -> Schedule -> IO Text
 formStatusText time state schedule = do 
                                         schedule_val <- readMVar schedule
+                                        let rawSleepSeconds = stateNextTime state - time
+                                        let sleepSeconds = rawSleepSeconds `mod` 60
+                                        let sleepMinutes = rawSleepSeconds `div` 60
                                         return $ pack $
-                                            "Interval: " <> show (stateInterval state) <> " minutes\n" <>
-                                            if null schedule_val
+                                            "Current Interval: " <> show (stateInterval state) <> 
+                                                (if stateInterval state == 1
+                                                    then " minute\n"
+                                                    else " minutes\n")                                             
+                                            <> (if null schedule_val
                                                 then "No messages to send"
-                                                else "Next message in: " <> show (max 0 (time2Send (last schedule_val) - time))
-                                                <>   " seconds\n" 
-                                                <>   "Messages to send: " <> show (length schedule_val)
+                                                <>   (if time < stateNextTime state
+                                                        then "\nSleeping for: " <> 
+                                                            if sleepMinutes > 0
+                                                                then show sleepMinutes <> 
+                                                                    if sleepMinutes == 1
+                                                                        then " minute "
+                                                                        else " minutes "
+                                                                    <> show sleepSeconds <> 
+                                                                        if sleepSeconds == 1
+                                                                            then " second\n"
+                                                                            else " seconds\n"
+                                                                else show sleepSeconds <> 
+                                                                    if sleepSeconds == 1
+                                                                        then " second\n"
+                                                                        else " seconds\n"
+                                                        else "")
+                                                else "Next message in: " <> 
+                                                    (if nextMinutes schedule_val > 0
+                                                        then show (nextMinutes schedule_val) <> 
+                                                            if nextMinutes schedule_val == 1
+                                                                then " minute "
+                                                                else " minutes "
+                                                            <> show (nextSeconds schedule_val) <> 
+                                                                if nextSeconds schedule_val == 1
+                                                                    then " second\n"
+                                                                    else " seconds\n"
+                                                        else show (nextSeconds schedule_val) <> 
+                                                            if nextSeconds schedule_val == 1
+                                                                then " second\n"
+                                                                else " seconds\n")
+                                                <> "Messages to send: " <> show (length schedule_val))
+                                                    where rawNextSeconds s = max 0 (time2Send (head s) - time)
+                                                          nextSeconds s = rawNextSeconds s `mod` 60
+                                                          nextMinutes s = rawNextSeconds s `div` 60
 
 responseNotAdmin :: Value -> IO Msg2Send
 responseNotAdmin msg = return $ Msg2Send
