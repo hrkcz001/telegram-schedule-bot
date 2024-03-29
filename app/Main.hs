@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -fno-warn-name-shadowing #-}
 
 module Main (main) where
 
@@ -8,24 +9,33 @@ import Logic (InitOpts(..), Schedule, process)
 import Timer (InitOpts(..), startTimer)
 import Control.Concurrent (threadDelay)
 import Data.Text (Text)
+import Data.Yaml (ParseException, decodeFileEither)
+import Data.Aeson (FromJSON(..), withObject, (.:))
+
+data Options = Options Token Int Int Int Text Text Text [Text]
+
+instance FromJSON Options where
+    parseJSON = withObject "Options" $ \v -> Options
+        <$>
+        v .: "token" <*>
+        v .: "updateTimeout" <*>
+        v .: "scheduleDefaultInterval" <*>
+        v .: "delay" <*>
+        v .: "destination" <*>
+        v .: "botName" <*>
+        v .: "password" <*>
+        v .: "admins"
 
 main :: IO ()
 main = do
-        stack <- initBot token updateTimeout
-        schedule <- initLogic token stack scheduleDefaultInterval destination password admins
-        _ <- initTimer token schedule botName delay
-        errorLoop stack
-            where 
-                token = "1023560776:AAE3igMt_MGdw4BYAjAfm2bBesqEBlrR3Hw"
-                updateTimeout = 5  -- timeout to get updates in seconds
-                scheduleDefaultInterval = 1  -- default interval to send messages in minutes
-                delay = 30  -- delay to check next message in schedule in seconds
-                destination = "@testhaskell"
-                botName = "Хтонь"
-                password = "7Qe2bZJ1LG"
-                admins = [  "znacit_ja_vcera_u_tebja_gostil"
-                         ,  "St_Someone"
-                         ]
+        options <- decodeFileEither "config.yaml" :: IO (Either ParseException Options)
+        case options of
+            Left err -> print err
+            Right (Options token updateTimeout scheduleDefaultInterval delay destination botName password admins) -> do
+                stack <- initBot token updateTimeout
+                schedule <- initLogic token stack scheduleDefaultInterval destination password admins
+                _ <- initTimer token schedule botName delay
+                errorLoop stack
 
 initBot :: Token -> Int -> IO Stack
 initBot token timeout = Update.init $ Update.InitOpts token timeout

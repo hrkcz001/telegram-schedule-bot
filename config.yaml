@@ -1,0 +1,9 @@
+admins:
+- a
+botName: a
+delay: 30
+destination: '@a'
+password: a
+scheduleDefaultInterval: 1
+token: a
+updateTimeout: 5

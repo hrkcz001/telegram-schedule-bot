@@ -1,0 +1,69 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.36.0.
+--
+-- see: https://github.com/sol/hpack
+
+name:           telegram-schedule-bot
+version:        0.1.0.0
+homepage:       https://github.com/hrkcz001/telegram-schedule-bot#readme
+bug-reports:    https://github.com/hrkcz001/telegram-schedule-bot/issues
+author:         hrkcz001
+maintainer:     hrkcz001
+copyright:      2023 hrkcz001
+license:        PADLA
+license-file:   LICENSE
+build-type:     Simple
+
+source-repository head
+  type: git
+  location: https://github.com/hrkcz001/telegram-schedule-bot
+
+library
+  exposed-modules:
+      Connection
+      Logic
+      Timer
+      Update
+  other-modules:
+      Paths_telegram_schedule_bot
+  hs-source-dirs:
+      src
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+  build-depends:
+      aeson
+    , base >=4.7 && <5
+    , bytestring
+    , containers
+    , lens
+    , lens-aeson
+    , scientific
+    , text
+    , time
+    , vector
+    , wreq
+    , yaml
+  default-language: Haskell2010
+
+executable telegram-schedule-bot-exe
+  main-is: Main.hs
+  other-modules:
+      Paths_telegram_schedule_bot
+  hs-source-dirs:
+      app
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      aeson
+    , base >=4.7 && <5
+    , bytestring
+    , containers
+    , lens
+    , lens-aeson
+    , scientific
+    , telegram-schedule-bot
+    , text
+    , time
+    , vector
+    , wreq
+    , yaml
+  default-language: Haskell2010
